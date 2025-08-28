@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Contract Intelligence Parser</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f4f7f9;
+        }
+        .drag-area {
+            border: 2px dashed #9ca3af;
+            border-radius: 0.75rem;
+            min-height: 200px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            transition: all 0.2s ease-in-out;
+        }
+        .drag-area.active {
+            border-color: #3b82f6;
+            background-color: #eff6ff;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
+
+    <div class="bg-white p-8 rounded-xl shadow-lg w-full max-w-4xl border border-gray-200">
+        <h1 class="text-3xl font-bold text-gray-800 mb-6 text-center">Contract Intelligence Parser</h1>
+
+        <div id="drag-area" class="drag-area bg-gray-50 text-gray-500 hover:text-gray-600 p-6 transition-colors duration-200">
+            <span class="text-center">
+                <p class="text-xl font-medium">Drag & Drop a PDF Contract</p>
+                <p class="text-sm mt-1">or click to browse</p>
+                <input type="file" id="file-input" class="hidden" accept=".pdf">
+            </span>
+        </div>
+
+        <div class="mt-4 text-center text-sm text-gray-600">
+            <p id="status-message"></p>
+        </div>
+
+        <div class="mt-8">
+            <h2 class="text-xl font-semibold text-gray-700 mb-4">Uploaded Contracts</h2>
+            <div class="overflow-x-auto rounded-lg shadow-sm">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">File Name</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Progress</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="contract-list" class="bg-white divide-y divide-gray-200">
+                    </tbody>
+                </table>
+            </div>
+            <div class="flex justify-center mt-6">
+                <button id="refresh-button" class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200 shadow">Refresh List</button>
+            </div>
+        </div>
+
+        <div id="modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden items-center justify-center p-4">
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl transform transition-all p-6">
+                <div class="flex justify-between items-center pb-3">
+                    <h3 class="text-xl font-semibold text-gray-800">Extracted Data</h3>
+                    <button id="close-modal" class="text-gray-400 hover:text-gray-600">&times;</button>
+                </div>
+                <div id="modal-content" class="max-h-96 overflow-y-auto">
+                    <pre class="bg-gray-100 p-4 rounded-lg text-sm text-gray-700 whitespace-pre-wrap"></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://127.0.0.1:5000';
+        const selectors = {
+            dragArea: '#drag-area',
+            fileInput: '#file-input',
+            statusMessage: '#status-message',
+            contractList: '#contract-list',
+            refreshButton: '#refresh-button',
+            modal: '#modal',
+            modalContent: '#modal-content pre',
+            closeModalButton: '#close-modal'
+        };
+
+        const elements = {};
+        for (const key in selectors) {
+            elements[key] = document.querySelector(selectors[key]);
+        }
+
+        let contracts = {};
+
+        const handleFileDrop = (file) => {
+            if (file && file.name.endsWith('.pdf')) {
+                uploadFile(file);
+            } else {
+                elements.statusMessage.textContent = 'Please drop a valid PDF file.';
+                elements.statusMessage.classList.add('text-red-500');
+                setTimeout(() => {
+                    elements.statusMessage.textContent = '';
+                    elements.statusMessage.classList.remove('text-red-500');
+                }, 3000);
+            }
+        };
+
+        elements.dragArea.addEventListener('click', () => elements.fileInput.click());
+        elements.dragArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            elements.dragArea.classList.add('active');
+            elements.statusMessage.textContent = 'Drop the file here...';
+        });
+        elements.dragArea.addEventListener('dragleave', () => {
+            elements.dragArea.classList.remove('active');
+            elements.statusMessage.textContent = '';
+        });
+        elements.dragArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            elements.dragArea.classList.remove('active');
+            handleFileDrop(e.dataTransfer.files[0]);
+        });
+        elements.fileInput.addEventListener('change', (e) => {
+            if (e.target.files[0]) {
+                handleFileDrop(e.target.files[0]);
+            }
+        });
+
+        async function uploadFile(file) {
+            elements.statusMessage.textContent = `Uploading "${file.name}"...`;
+            elements.statusMessage.classList.remove('text-red-500');
+            elements.statusMessage.classList.add('text-blue-500');
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const res = await fetch(`${API_URL}/contracts/upload`, {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                const data = await res.json();
+                if (res.ok) {
+                    const contractId = data.contract_id;
+                    contracts[contractId] = {
+                        id: contractId,
+                        filename: file.name,
+                        status: 'pending',
+                        progress: 0,
+                    };
+                    
+                    elements.statusMessage.textContent = `Upload successful! Contract ID: ${contractId}`;
+                    elements.statusMessage.classList.remove('text-blue-500');
+                    elements.statusMessage.classList.add('text-green-500');
+
+                    updateContractList();
+                    pollStatus(contractId);
+                } else {
+                    throw new Error(data.error || 'Upload failed.');
+                }
+            } catch (err) {
+                console.error('Upload Error:', err);
+                elements.statusMessage.textContent = `Error: ${err.message}`;
+                elements.statusMessage.classList.remove('text-blue-500');
+                elements.statusMessage.classList.add('text-red-500');
+            }
+        }
+
+        async function pollStatus(contractId) {
+            const interval = setInterval(async () => {
+                try {
+                    const res = await fetch(`${API_URL}/contracts/${contractId}/status`);
+                    const data = await res.json();
+                    
+                    if (contracts[contractId]) {
+                        Object.assign(contracts[contractId], { status: data.status, progress: data.progress });
+                        updateContractList();
+
+                        if (data.status === 'completed' || data.status === 'failed') {
+                            clearInterval(interval);
+                            if (data.status === 'completed') {
+                                fetchContractData(contractId);
+                            }
+                        }
+                    }
+                } catch (err) {
+                    console.error('Polling Error:', err);
+                    clearInterval(interval);
+                }
+            }, 1000);
+        }
+
+        async function fetchContractData(contractId) {
+            try {
+                const res = await fetch(`${API_URL}/contracts/${contractId}`);
+                const data = await res.json();
+                if (res.ok) {
+                    if (contracts[contractId]) {
+                        Object.assign(contracts[contractId], { extractedData: data.extracted_data, confidenceScore: data.confidence_score });
+                        updateContractList();
+                    }
+                }
+            } catch (err) {
+                console.error('Data Fetch Error:', err);
+            }
+        }
+
+        function updateContractList() {
+            elements.contractList.innerHTML = '';
+            const sortedIds = Object.keys(contracts).reverse();
+            if (sortedIds.length === 0) {
+                elements.contractList.innerHTML = `<tr><td colspan="4" class="py-4 text-center text-gray-500">No contracts uploaded yet.</td></tr>`;
+                return;
+            }
+
+            sortedIds.forEach(id => {
+                const contract = contracts[id];
+                const row = document.createElement('tr');
+                row.className = 'hover:bg-gray-50 transition-colors duration-150';
+
+                row.innerHTML = `
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${contract.filename}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${contract.status}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        <div class="w-full bg-gray-200 rounded-full h-2.5">
+                            <div class="bg-blue-600 h-2.5 rounded-full transition-all duration-300 ease-out" style="width: ${contract.progress}%"></div>
+                        </div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                        ${contract.status === 'completed' ? `<button class="text-indigo-600 hover:text-indigo-900 view-data-btn" data-id="${contract.id}">View Data</button>` : `<span class="text-gray-400">Pending...</span>`}
+                    </td>
+                `;
+                elements.contractList.appendChild(row);
+            });
+            
+            elements.contractList.querySelectorAll('.view-data-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const contractId = e.target.dataset.id;
+                    showModal(contracts[contractId]);
+                });
+            });
+        }
+
+        function showModal(contract) {
+            elements.modal.style.display = 'flex';
+            const displayData = {
+                'Confidence Score': `${contract.confidenceScore}/100`,
+                ...contract.extractedData,
+            };
+            elements.modalContent.textContent = JSON.stringify(displayData, null, 2);
+        }
+
+        elements.closeModalButton.addEventListener('click', () => {
+            elements.modal.style.display = 'none';
+        });
+        window.addEventListener('click', (e) => {
+            if (e.target === elements.modal) {
+                elements.modal.style.display = 'none';
+            }
+        });
+
+        elements.refreshButton.addEventListener('click', () => {
+            Object.keys(contracts).forEach(contractId => {
+                if (contracts[contractId].status !== 'completed' && contracts[contractId].status !== 'failed') {
+                    pollStatus(contractId);
+                }
+            });
+        });
+
+        updateContractList();
+    </script>
+</body>
+</html>
